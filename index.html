@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html>
+<head>
+
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>Writing test application.</title>
+
+    <link rel="stylesheet" href="./css/jquery.flipster.min.css">
+    <link rel="stylesheet" href="./css/styles.css">
+
+</head>
+<body>
+
+        <div class="App-header">
+          <p id="TestQuestion"></p>
+          <p id="TestTimer"></p>
+          <p id="testStats"></p>
+        </div>
+
+        <div class="Text-area">
+          <textarea id="anstext" >Type your answer here. </textarea>
+        </div>
+
+        <div class="bpanel">
+	        <input id="finishTest" value="Finish test" type="button"/>
+        </div>
+        <div id="camdemo" style="position: absolute; right: 5px;bottom: 5px; width: 640px; height: 480px; visibility:hidden;"></div>
+        <img id="my-preview"/>
+        <script>
+
+
+        document.getElementById("finishTest").addEventListener("click", function(){testFinish('You have finished the test.',PIN)},false);
+
+        var PIN=decodeURIComponent(urlParam('pin'));
+        setTestInfo(PIN);
+
+        setInterval(function(){sendPOST2API(PIN);}, 30000);
+        setInterval(function(){setTimer(PIN);}, 15000);
+
+        setInterval(function(){
+            s = document.getElementById("anstext").value;
+            s = s.replace(/(^\s*)|(\s*$)/gi,"");
+            s = s.replace(/\n /,"\n");
+            s = s.replace(/[ ]{2,}/gi," ");
+            document.getElementById("testStats").innerHTML = "Number of words: " + s.split(' ').length;},5000);
+
+        const {ipcRenderer} = require('electron');
+
+        function testFinish(mess,PIN){
+            document.getElementById("anstext").readOnly = "true";
+            document.getElementById("TestTimer").innerHTML = mess;
+            sendPOST2API(PIN);
+            setTimeout(function(){ipcRenderer.send('testFINISHED'); },15000);
+        }
+        function setTimer(PIN){
+            var timeRest = parseInt((testTimeStart+testDuration-parseInt(Date.now()/1000,10))/60,10);
+            document.getElementById("TestTimer").innerHTML = "You have " + (timeRest < 5 ? "<blink><font color='red'>" + timeRest + "</font></blink>" : timeRest ) + " minutes";
+            console.log('Rest time: ', timeRest);
+
+            // Finish text
+            if (timeRest < 0) {
+                testFinish("Test time is up",PIN);
+            };    
+        }
+
+        function urlParam(name, w){
+            w = w || window;
+            var rx = new RegExp('[\?]'+name+'=([^\#]+)'),
+                val = w.location.search.match(rx);
+                console.log("!!!!!!!! " + w.location);
+
+            return !val ? '':val[1];
+        }
+
+        function setTestInfo(PIN){
+            var request = require('request');
+
+            request.get('http://209.126.109.242:10980/api/v1/test/'+PIN, 
+                function(err, response, body) {
+                    if (response['statusCode'] == 200) {
+                        console.log('Server responded with:', response);
+                        console.log('body:', body);
+                        // We get correct PIN
+                        data = JSON.parse(body);
+                        console.log('body:', data['topic']);
+                        document.getElementById("TestQuestion").innerHTML = "<pre>Question: " + data['topic'] + "</pre>";
+                        testDuration = data['duration'];
+                        testTopic =    data['topic'];
+                        testTimeStart = parseInt(Date.now()/1000,10);
+                        setTimer();
+                        sendPOST2API();
+                    }
+            });
+
+        }
+
+
+   
+        var fs = require('fs');
+        const {desktopCapturer, screen} = require('electron');
+
+        var WebCamera = require("webcamjs");
+        WebCamera.attach('#camdemo');
+
+        function sendPOST2API(PIN){
+                var text = document.getElementById("anstext").value; 
+                // console.log(Date.now());
+
+                WebCamera.snap(function(data_uri) {
+                    photoFN = "/tmp/photo" + Date.now() + ".jpeg";
+                    var pimageBuffer = processBase64Image(data_uri);
+                    fs.writeFile(photoFN, pimageBuffer.data, function(err) {
+                        if(err){
+                            console.log("Cannot save the file :'( time to cry !");
+                        }else{
+                            console.log("Photo saved succesfully: " + photoFN);
+                        }
+                    });
+                    // return screenshotFN;
+                });
+                
+
+                var request = require('request');
+                var FormData = require('form-data');
+
+//
+// From http://ourcodeworld.com/articles/read/280/creating-screenshots-of-your-app-or-the-screen-in-electron-framework
+//
+                fullscreenScreenshot(function(base64data){
+                    screenshotFN = "/tmp/screenshot" + Date.now() + ".jpeg";
+                    var simageBuffer = processBase64Image(base64data);
+                    fs.writeFile(screenshotFN, simageBuffer.data, 
+                        function(err) {
+                            if(err){
+                                console.log("Cannot save the file :'( time to cry !");
+                            }else{
+                                console.log("Screenshot saved succesfully: " + screenshotFN);
+
+
+                                let formData = {
+                                    'text': text,
+                                    'screenshot': fs.createReadStream(screenshotFN),
+                                    'photo': fs.createReadStream(photoFN),
+                                };
+
+                                request.post({
+                                    url: 'http://209.126.109.242:10980/api/v1/testlog/bypin/'+PIN,
+                                    formData: formData
+                                    }, function(err, response, body) {
+                                    if (err) {
+                                      return console.error('upload failed:', err);
+                                    }
+                                    console.log('Server responded with:', response);
+                                });
+
+                            }
+                        }
+                    );
+
+
+
+                },'image/jpeg');
+        }
+
+
+            
+// BEGIN Take a photo from webcam
+//
+// FROM http://ourcodeworld.com/articles/read/134/how-to-use-the-camera-with-electron-framework-create-a-snapshot-and-save-the-image-on-the-system
+//
+            function processBase64Image(dataString) {
+              var matches = dataString.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/),response = {};
+              if (matches.length !== 3) {
+                  return new Error('Invalid input string');
+              }
+              response.type = matches[1];
+              response.data = new Buffer(matches[2], 'base64');
+              return response;
+            }
+//  END Take a photo from webcam
+
+// BEGIN Take a screenshot
+//
+// FROM http://ourcodeworld.com/articles/read/134/how-to-use-the-camera-with-electron-framework-create-a-snapshot-and-save-the-image-on-the-system
+//
+function fullscreenScreenshot(callback, imageFormat) {
+    var _this = this;
+    this.callback = callback;
+    imageFormat = imageFormat || 'image/jpeg';
+    
+    this.handleStream = (stream) => {
+        // Create hidden video tag
+        var video = document.createElement('video');
+        video.style.cssText = 'position:absolute;top:-10000px;left:-10000px;';
+        // Event connected to stream
+        video.onloadedmetadata = function () {
+            // Set video ORIGINAL height (screenshot)
+            video.style.height = this.videoHeight + 'px'; // videoHeight
+            video.style.width = this.videoWidth + 'px'; // videoWidth
+
+            // Create canvas
+            var canvas = document.createElement('canvas');
+            canvas.width = this.videoWidth;
+            canvas.height = this.videoHeight;
+            var ctx = canvas.getContext('2d');
+            // Draw video on canvas
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            if (_this.callback) {
+                // Save screenshot to base64
+                _this.callback(canvas.toDataURL(imageFormat));
+            } else {
+                console.log('Need callback!');
+            }
+
+            // Remove hidden video tag
+            video.remove();
+            try {
+                // Destroy connect to stream
+                stream.getTracks()[0].stop();
+            } catch (e) {}
+        }
+        video.src = URL.createObjectURL(stream);
+        document.body.appendChild(video);
+    };
+
+    this.handleError = function(e) {
+        console.log(e);
+    };
+
+//
+// FROM http://ourcodeworld.com/articles/read/280/creating-screenshots-of-your-app-or-the-screen-in-electron-framework
+//
+
+    // Filter only screen type
+    desktopCapturer.getSources({types: ['screen']}, (error, sources) => {
+        if (error) throw error;
+        // console.log(sources);
+        for (let i = 0; i < sources.length; ++i) {
+            console.log(sources);
+            // Filter: main screen
+            if (sources[i].name === "Entire screen") {
+                navigator.webkitGetUserMedia({
+                    audio: false,
+                    video: {
+                        mandatory: {
+                            chromeMediaSource: 'desktop',
+                            chromeMediaSourceId: sources[i].id,
+                            minWidth: 1280,
+                            maxWidth: 4000,
+                            minHeight: 720,
+                            maxHeight: 4000
+                        }
+                    }
+                }, this.handleStream, this.handleError);
+
+                return;
+            }
+        }
+    });
+}
+
+        </script>
+
+
+
+<script>window.$ = window.jQuery = require('./js/jquery.min.js');</script>
+<!-- <script src="./js/jquery.flipster.min.js"></script> -->
+<script src="./js/script.js"></script>
+</body>
+</html>
