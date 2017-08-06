@@ -8,33 +8,58 @@
     <title>Writing test application.</title>
 
     <link rel="stylesheet" href="./css/jquery.flipster.min.css">
+    <link rel="stylesheet" href="./css/jquery-ui.min.css">
     <link rel="stylesheet" href="./css/styles.css">
-
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </head>
 <body>
 
-        <div class="App-header">
+
+<i id="zoom_in" class="material-icons orange600">zoom_in</i>
+<i id="zoom_out" class="material-icons orange600">zoom_out</i>
+
+
+    <div class="App-header">
+      <p id="TestTimer"></p>
+      <p id="testStats"></p>
+    </div>
+
+    <div class="Main-area">
+        <div class="Question-area">
           <p id="TestQuestion"></p>
-          <p id="TestTimer"></p>
-          <p id="testStats"></p>
         </div>
 
-        <div class="Text-area">
+        <div class="Answer-area">
           <textarea id="anstext" >Type your answer here. </textarea>
         </div>
 
-        <div class="bpanel">
-	        <input id="finishTest" value="Finish test" type="button"/>
-        </div>
-        <div id="camdemo" style="position: absolute; right: 5px;bottom: 5px; width: 640px; height: 480px; visibility:hidden;"></div>
-        <img id="my-preview"/>
-        <script>
+    </div>
+
+    <div class="bpanel">
+        <input id="finishTest" value="Finish test" type="button" style="font-size : 110%;" />
+    </div>
+    <div id="camdemo" style="position: absolute; right: 5px;bottom: 5px; width: 640px; height: 480px; visibility:hidden;"></div>
+    <img id="my-preview"/>
 
 
-        document.getElementById("finishTest").addEventListener("click", function(){testFinish('You have finished the test.',PIN)},false);
+<script>window.$ = window.jQuery = require('./js/jquery.min.js');</script>
+
+<script src="./js/jquery-ui.min.js"></script>
+<!-- <script src="./js/jquery.flipster.min.js"></script> -->
+
+    <script>
+
+        var APISRV='http://exam.expert-it.org:81/api/v1/';
+        var TestRestTime = 100;
+
+        document.getElementById("finishTest").addEventListener("click", 
+            function(){testFinish("If you click OK, all your answers will be saved and the application will be closed. After that you will not be able to add/edit your answers.", "Do you want to finish the test.",PIN,"cancel")}
+            ,false);
 
         var PIN=decodeURIComponent(urlParam('pin'));
+
         setTestInfo(PIN);
+//        sendPOST2API(PIN);
 
         setInterval(function(){sendPOST2API(PIN);}, 30000);
         setInterval(function(){setTimer(PIN);}, 15000);
@@ -44,115 +69,133 @@
             s = s.replace(/(^\s*)|(\s*$)/gi,"");
             s = s.replace(/\n /,"\n");
             s = s.replace(/[ ]{2,}/gi," ");
-            document.getElementById("testStats").innerHTML = "Number of words: " + s.split(' ').length;},5000);
+            document.getElementById("testStats").innerHTML = "Number of words: " + s.split(' ').length;},5000
+        );
 
         const {ipcRenderer} = require('electron');
 
-        function testFinish(mess,PIN){
-            document.getElementById("anstext").readOnly = "true";
-            document.getElementById("TestTimer").innerHTML = mess;
-            sendPOST2API(PIN);
-            setTimeout(function(){ipcRenderer.send('testFINISHED'); },15000);
-        }
-        function setTimer(PIN){
-            var timeRest = parseInt((testTimeStart+testDuration-parseInt(Date.now()/1000,10))/60,10);
-            document.getElementById("TestTimer").innerHTML = "You have " + (timeRest < 5 ? "<blink><font color='red'>" + timeRest + "</font></blink>" : timeRest ) + " minutes";
-            console.log('Rest time: ', timeRest);
+        function testFinish(message,title,PIN,cancel){
+// ?????????
+//            sendPOST2API(PIN);
+            var mbuttons = {};
+            mbuttons['Ok'] = function()  {
+                        document.getElementById("anstext").readOnly = "true";
+                        document.getElementById("TestTimer").innerHTML = message;
+                        $( this ).dialog( 'close' );
+                        ipcRenderer.send('testFINISHED');
+                    };
+            if (Boolean(cancel)){
+                mbuttons['Cancel']= function()  {
+                            $( this ).dialog( 'close' );
+                        };
+            }
 
-            // Finish text
-            if (timeRest < 0) {
-                testFinish("Test time is up",PIN);
-            };    
+            $('<div></div>').html( message ).dialog({
+                title: title,
+                    maxWidth:600,
+                    width: 300,
+                resizable: false,
+                modal: true,
+                buttons: mbuttons,
+                open: function(event, ui) {
+                  $(this).closest('.ui-dialog').find('.ui-dialog-titlebar-close').hide();
+                },
+            });
+        }
+
+        function setTimer(PIN){
+            // var timeRest = parseInt((testTimeStart+60*testDuration-parseInt(Date.now()/1000,10))/60,10);
+            document.getElementById("TestTimer").innerHTML = "You have " + (TestRestTime < 5 ? "<blink><font color='red'>" + TestRestTime + "</font></blink>" : TestRestTime ) + " minutes";
+            // Finish test
+            if (TestRestTime <= 0) {
+                testFinish("Test\'s time is up, all you answers are saved, closing the application.","Test time is up",PIN);
+            };
         }
 
         function urlParam(name, w){
             w = w || window;
             var rx = new RegExp('[\?]'+name+'=([^\#]+)'),
                 val = w.location.search.match(rx);
-                console.log("!!!!!!!! " + w.location);
+                console.log("Location: " + w.location);
 
             return !val ? '':val[1];
         }
 
         function setTestInfo(PIN){
             var request = require('request');
-
-            request.get('http://209.126.109.242:10980/api/v1/test/'+PIN, 
+            request.get(APISRV+'test/'+PIN+'/', 
                 function(err, response, body) {
                     if (response['statusCode'] == 200) {
                         console.log('Server responded with:', response);
-                        console.log('body:', body);
-                        // We get correct PIN
                         data = JSON.parse(body);
-                        console.log('body:', data['topic']);
-                        document.getElementById("TestQuestion").innerHTML = "<pre>Question: " + data['topic'] + "</pre>";
-                        testDuration = data['duration'];
-                        testTopic =    data['topic'];
+                        document.getElementById("TestQuestion").innerHTML = "Question: " + data['question'];
+                        TestRestTime = data['resttime'];
                         testTimeStart = parseInt(Date.now()/1000,10);
-                        setTimer();
-                        sendPOST2API();
+                        setTimer(PIN);
+
                     }
             });
 
         }
 
-
-   
         var fs = require('fs');
         const {desktopCapturer, screen} = require('electron');
 
+        var CamOK=1;
         var WebCamera = require("webcamjs");
         WebCamera.attach('#camdemo');
+        WebCamera.on( 'error', function(err) {
+            console.log("Cannot acces WEBCAM!!!!!!!!!!!!"+err);
+            CamOK=0;
+        // an error occurred (see 'err')
+        } );
 
         function sendPOST2API(PIN){
                 var text = document.getElementById("anstext").value; 
-                // console.log(Date.now());
-
-                WebCamera.snap(function(data_uri) {
-                    photoFN = "/tmp/photo" + Date.now() + ".jpeg";
-                    var pimageBuffer = processBase64Image(data_uri);
-                    fs.writeFile(photoFN, pimageBuffer.data, function(err) {
-                        if(err){
-                            console.log("Cannot save the file :'( time to cry !");
-                        }else{
-                            console.log("Photo saved succesfully: " + photoFN);
-                        }
+                console.log("### ",PIN);
+                if (CamOK) { 
+                    WebCamera.snap(function(data_uri) {
+                        photoFN = "photo" + Date.now() + ".jpeg";
+                        var pimageBuffer = processBase64Image(data_uri);
+                        fs.writeFile(photoFN, pimageBuffer.data, function(err) {
+                            if(err){
+                                console.log("Cannot save the file 1111 time to cry !");
+                            }else{
+                                console.log("Photo saved succesfully: " + photoFN);
+                            }
+                        });
+                        // return screenshotFN;
                     });
-                    // return screenshotFN;
-                });
-                
-
+                }
                 var request = require('request');
                 var FormData = require('form-data');
-
 //
 // From http://ourcodeworld.com/articles/read/280/creating-screenshots-of-your-app-or-the-screen-in-electron-framework
 //
                 fullscreenScreenshot(function(base64data){
-                    screenshotFN = "/tmp/screenshot" + Date.now() + ".jpeg";
+                    screenshotFN = "screenshot" + Date.now() + ".jpeg";
                     var simageBuffer = processBase64Image(base64data);
                     fs.writeFile(screenshotFN, simageBuffer.data, 
                         function(err) {
                             if(err){
-                                console.log("Cannot save the file :'( time to cry !");
+                                console.log("Cannot save the file 22222 time to cry !");
                             }else{
                                 console.log("Screenshot saved succesfully: " + screenshotFN);
-
-
                                 let formData = {
                                     'text': text,
                                     'screenshot': fs.createReadStream(screenshotFN),
-                                    'photo': fs.createReadStream(photoFN),
+                                    'photo': (CamOK?fs.createReadStream(photoFN):""),
                                 };
-
                                 request.post({
-                                    url: 'http://209.126.109.242:10980/api/v1/testlog/bypin/'+PIN,
+                                    url: APISRV+'testlog/bypin/'+PIN+'/',
                                     formData: formData
                                     }, function(err, response, body) {
                                     if (err) {
                                       return console.error('upload failed:', err);
                                     }
                                     console.log('Server responded with:', response);
+                                    data = JSON.parse(body);
+                                    TestRestTime = data['resttime'];
                                 });
 
                             }
@@ -165,7 +208,7 @@
         }
 
 
-            
+
 // BEGIN Take a photo from webcam
 //
 // FROM http://ourcodeworld.com/articles/read/134/how-to-use-the-camera-with-electron-framework-create-a-snapshot-and-save-the-image-on-the-system
@@ -266,8 +309,36 @@ function fullscreenScreenshot(callback, imageFormat) {
 
 
 
-<script>window.$ = window.jQuery = require('./js/jquery.min.js');</script>
-<!-- <script src="./js/jquery.flipster.min.js"></script> -->
+<script>
+    $(document).ready(function($)
+    {
+        // Set initial zoom level
+        var fsize=14;
+
+        // Click events
+        $('#zoom_in').click(function() { zoom_font(1, $(this)) });
+        $('#zoom_out').click(function() { zoom_font(-1, $(this)) });
+        $('#zoom_reset').click(function() { zoom_font(0, $(this)) });
+
+        // Zoom function
+        function zoom_font(step, trigger)
+        {
+            // Set / reset zoom
+            if(step==0) 
+		fsize=14;
+            else 
+		fsize +=step;
+            // Set page zoom via CSS
+            $('body').css("font-size", fsize);
+        }
+    });
+</script>
+
+
 <script src="./js/script.js"></script>
+
+
+
+
 </body>
 </html>
