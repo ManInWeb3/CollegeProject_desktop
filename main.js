@@ -38,7 +38,7 @@ app.on('ready', function() {
 
   ipcMain.on('loginOK', (event, arg) => {
     // console.log("We got: "+arg);  // prints "ping"
-    mainWindow.loadURL('file://' + __dirname + '/index.html?pin=' + arg);
+    mainWindow.loadURL('file://' + __dirname + '/test.html?pin=' + arg);
   })
 
 

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>Writing test application.</title>
+
+    <link rel="stylesheet" href="./css/styles.css">
+    <link rel="stylesheet" href="./css/smalltalk.css">
+</head>
+<body>
+    <!-- <input id="triggerLogin" value="send to API" type="button"/> -->
+
+       <script>
+
+        var smalltalk = require('smalltalk');
+
+
+        const {ipcRenderer} = require('electron');
+
+        function getPIN(curPIN,Message="Enter your PIN"){
+                var request = require('request');
+
+            smalltalk.prompt(Message,"Please enter your test PIN:",curPIN).then((value) => {
+                console.log("You've entered: ",value);
+                request.get('http://exam.expert-it.org:81/api/v1/test/'+value,
+                    function(err, response, body) {
+                        if (response['statusCode'] == 200) {
+                            // console.log('Server responded with:', response);
+                            console.log('body:', body);
+                            // We get correct PIN
+                            ipcRenderer.send('loginOK', value);
+                        }
+                    });
+
+                
+                getPIN("", "Incorrect PIN entered");
+            }, function() {
+                getPIN("");
+            });
+
+        };
+
+        getPIN("");
+
+        </script>
+
+
+</body>
+</html>
