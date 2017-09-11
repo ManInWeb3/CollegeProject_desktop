@@ -6,34 +6,35 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
     <link rel="stylesheet" href="./css/jquery-ui.min.css">
-    
+    <link rel="stylesheet" href="./css/bootstrap.min.css">
     <link rel="stylesheet" href="./css/styles.css">
+
+    <script src="./js/ckeditor/ckeditor.js"></script>
+    <script src="./js/ckeditor/config.js"></script>
+
 </head>
 <body>
 
-
-<i id="zoom_in" class="material-icons orange600">zoom_in</i>
-<i id="zoom_out" class="material-icons orange600">zoom_out</i>
-
-
     <div class="App-header">
-      <p id="TestTimer"></p>
-      <p id="testStats"></p>
+        <div id="networkmsg"></div>
+        <p id="TestTimer"></p>
     </div>
 
     <div class="Main-area">
         <div class="Question-area">
-          <p id="TestQuestion"></p>
+            <div id="TestQuestion"></div>
+            <div id="QuestionAttachments"></div>
+
         </div>
 
         <div class="Answer-area">
-          <textarea id="anstext" >Type your answer here. </textarea>
+            <textarea id="anstext" contenteditable="true"></textarea>
         </div>
 
     </div>
 
     <div class="bpanel">
-        <input id="finishTest" value="Finish test" type="button" style="font-size : 110%;" />
+        <input id="finishTest" value="Save answers and Finish test" type="button" style="font-size : 100%;" />
     </div>
     <div id="camdemo" style="position: absolute; right: 5px;bottom: 5px; width: 640px; height: 480px; visibility:hidden;"></div>
     <img id="my-preview"/>
@@ -46,11 +47,21 @@
 
     <script>
 
-        const APISRV='http://exam.expert-it.org:81/api/v1/';
-        var TestRestTime = 100;
+        const BCKND='http://exam.expert-it.org:81';
+        const APISRV=BCKND+'/api/v1/';
+        const MAXErrorsCount = 4;
+        const intervalSendDATA = 30000; //ml seconds
+        var TestRestTime = 0;
+        var ErrorsCount = 0;
+        var NowPlaying = "";
+        var CKEDITOR;
+
+        var request = require('request');
+        var os = require("os");
+
 
         document.getElementById("finishTest").addEventListener("click", 
-            function(){testFinish("If you click OK, all your answers will be saved and the application will be closed. After that you will not be able to add/edit your answers.", "Do you want to finish the test.",PIN,"cancel")}
+            function(){showDlgFinish("If you click OK, all your answers will be saved and the application will be closed. After that you will not be able to add/edit your answers.", "Do you want to finish the test.",PIN,"cancel",0)}
             ,false);
 
         var PIN=decodeURIComponent(urlParam('pin'));
@@ -58,28 +69,22 @@
         setTestInfo(PIN);
 //        sendPOST2API(PIN);
 
-        setInterval(function(){sendPOST2API(PIN);}, 30000);
-        setInterval(function(){setTimer(PIN);}, 15000);
-
-        setInterval(function(){
-            s = document.getElementById("anstext").value;
-            s = s.replace(/(^\s*)|(\s*$)/gi,"");
-            s = s.replace(/\n /,"\n");
-            s = s.replace(/[ ]{2,}/gi," ");
-            document.getElementById("testStats").innerHTML = "Number of words: " + s.split(' ').length;},5000
-        );
+        setInterval(function(){sendPOST2API(PIN);}, intervalSendDATA);
+        setInterval(function(){setResttime(PIN);}, 15000);
 
         const {ipcRenderer} = require('electron');
 
-        function testFinish(message,title,PIN,cancel){
-// ?????????
-//            sendPOST2API(PIN);
+        function showDlgFinish(message,title,PIN,cancel=0,finish=1){
             var mbuttons = {};
             mbuttons['Ok'] = function()  {
                         document.getElementById("anstext").readOnly = "true";
                         document.getElementById("TestTimer").innerHTML = message;
                         $( this ).dialog( 'close' );
-                        ipcRenderer.send('testFINISHED');
+                        sendPOST2API(PIN, 'FINISH_TEST');
+                        if (Boolean(finish)){
+                            ipcRenderer.send('testFINISHED');
+                        }
+
                     };
             if (Boolean(cancel)){
                 mbuttons['Cancel']= function()  {
@@ -100,12 +105,13 @@
             });
         }
 
-        function setTimer(PIN){
-            // var timeRest = parseInt((testTimeStart+60*testDuration-parseInt(Date.now()/1000,10))/60,10);
+
+        function setResttime(PIN){
             document.getElementById("TestTimer").innerHTML = "You have " + (TestRestTime < 5 ? "<blink><font color='red'>" + TestRestTime + "</font></blink>" : TestRestTime ) + " minutes";
             // Finish test
             if (TestRestTime <= 0) {
-                testFinish("Test\'s time is up, all you answers are saved, closing the application.","Test time is up",PIN);
+                showDlgFinish("Test\'s time is up, all you answers are saved, closing the application.","Test time is up",PIN,0,"finish");
+
             };
         }
 
@@ -119,92 +125,219 @@
         }
 
         function setTestInfo(PIN){
-            var request = require('request');
+            // var request = require('request');
             request.get(APISRV+'test/'+PIN+'/', 
                 function(err, response, body) {
-                    if (response['statusCode'] == 200) {
-                        console.log('Server responded with:', response);
-                        data = JSON.parse(body);
-                        document.getElementById("TestQuestion").innerHTML = "Question: " + data['question'];
-                        TestRestTime = data['resttime'];
-                        testTimeStart = parseInt(Date.now()/1000,10);
-                        setTimer(PIN);
+                    try {
+                        if (response['statusCode'] == 200) {
+                            console.log('Server responded with:', response);
+                            data = JSON.parse(body);
+                            document.getElementById("TestQuestion").innerHTML = "Question: " + data['question'];
+                            document.getElementById("anstext").value = data['answer_text'];
+                            CKEDITOR.replace('anstext');
+                            // CKEDITOR.instances.anstext.setData(data['answer_text'], function(){ this.checkDirty(); });
 
-                    }
+                            TestRestTime = data['resttime'];
+                            setResttime(PIN);
+                            attachments = data['attachments'];
+
+                            if (attachments.length) {
+                                // document.getElementById('TestQuestion').style.height="calc(100%-"+attachments.length+"*2em)";
+                                console.log(document.getElementById('TestQuestion').offsetHeight , attachments.length*50);
+                                nheight = document.getElementById('TestQuestion').offsetHeight - attachments.length*45-10;
+                                document.getElementById('TestQuestion').style.height=nheight.toString()+"px";
+                                var rechtml="";
+                                attachments.forEach(function(entry) {
+                                    // console.log(entry);
+                                    preid=entry['name'].replace(/[^\d^\w]/g, '');
+                                    rechtml += '<div id="attplay_'+preid+'" name="'+entry['name']+'"><i id="play_'+preid+'" class="material-icons" src="'+ entry['path']+'" >play_arrow</i>'+entry['name']+'</div>';
+                                });
+                                document.getElementById('QuestionAttachments').innerHTML=rechtml;
+                                nheight = attachments.length*45-10;
+                                document.getElementById('QuestionAttachments').style.height=nheight.toString()+"px";
+
+                            }
+
+                            sendPOST2API(PIN, 'START_TEST');
+                        } else {
+                            // 499 - the test is not active
+                            console.log('Server responded with:', response);
+                            data = JSON.parse(body);
+                            showDlgFinish(data['message'],"Test's information is not available now.",PIN,0,"finish");
+
+
+                        }
+                    } catch (err2) {
+                        console.log("ERROR!!!!!! "+PIN);
+                        console.log(err);
+                        console.log(err2);
+                        showDlgFinish("Cannot connect to the server. Please fix network connection and start the application again. Your test wasn't started you can pass it again, when the connection is fixed.","No network connection",PIN,0,"finish");
+
+                        }
             });
 
         }
 
+        var AudioRec = new Audio();
+        var NowPlaying;
+
+        function AudioRecInfo(AudioRec) {
+            // console.log("!!!!!!!!!!!!!!!", NowPlaying);
+            if ( NowPlaying != '') {
+                document.getElementById("att"+NowPlaying).innerHTML='<i class="material-icons red">album</i><font size="3em" color="red"><b>Playing '+Math.round(AudioRec.currentTime)+'/'+Math.round(AudioRec.duration)+'</b></font>';
+            }
+        }
+
+        $('#QuestionAttachments').on("click", ".material-icons", function(){
+                
+                if ( NowPlaying == '' && this.id != 'played') {
+                 
+                    console.log("Play ", this.id, this.getAttribute("src"));
+
+                    NowPlaying = this.id;
+                    AudioRec.src = BCKND+this.getAttribute("src");
+
+                    this.setAttribute('id', 'played');
+                    this.setAttribute('src', 'played');
+                    this.innerHTML = "album";
+
+                    AudioRec.addEventListener("ended", function() { 
+                            document.getElementById("att"+NowPlaying).innerHTML='<i id="played" class="material-icons">done</i>'+document.getElementById("att"+NowPlaying).getAttribute("name");
+                            NowPlaying='';
+                        }, true);
+
+                    AudioRec.play();
+                } else {
+                    console.log("Cannot play, because something is already playing or you clicked plyed recording");
+                }
+
+            });
+
+        setInterval( AudioRecInfo, 1000, AudioRec);
+
+
+//  Screenshot and Photo !!!!!!!!!!!!
+
         var fs = require('fs');
-        const {desktopCapturer, screen} = require('electron');
+        // const {desktopCapturer, screen} = require('electron');
 
         var CamOK=1;
         var WebCamera = require("webcamjs");
         WebCamera.attach('#camdemo');
         WebCamera.on( 'error', function(err) {
-            console.log("Cannot acces WEBCAM!!!!!!!!!!!!"+err);
+            console.log("Cannot access WEBCAM!!!!!!!!!!!!"+err);
             CamOK=0;
         // an error occurred (see 'err')
         } );
 
-        function sendPOST2API(PIN){
-                var text = document.getElementById("anstext").value; 
-                console.log("### ",PIN);
-                if (CamOK) { 
-                    WebCamera.snap(function(data_uri) {
-                        photoFN = "photo" + Date.now() + ".jpeg";
-                        var pimageBuffer = processBase64Image(data_uri);
-                        fs.writeFile(photoFN, pimageBuffer.data, function(err) {
-                            if(err){
-                                console.log("Cannot save the file 1111 time to cry !");
-                            }else{
-                                console.log("Photo saved succesfully: " + photoFN);
-                            }
-                        });
-                        // return screenshotFN;
-                    });
-                }
-                var request = require('request');
-                var FormData = require('form-data');
-//
-// From http://ourcodeworld.com/articles/read/280/creating-screenshots-of-your-app-or-the-screen-in-electron-framework
-//
-                fullscreenScreenshot(function(base64data){
-                    screenshotFN = "screenshot" + Date.now() + ".jpeg";
-                    var simageBuffer = processBase64Image(base64data);
-                    fs.writeFile(screenshotFN, simageBuffer.data, 
-                        function(err) {
-                            if(err){
-                                console.log("Cannot save the file 22222 time to cry !");
-                            }else{
-                                console.log("Screenshot saved succesfully: " + screenshotFN);
-                                let formData = {
-                                    'text': text,
-                                    'screenshot': fs.createReadStream(screenshotFN),
-                                    'photo': (CamOK?fs.createReadStream(photoFN):""),
-                                };
-                                request.post({
-                                    url: APISRV+'testlog/bypin/'+PIN+'/',
-                                    formData: formData
-                                    }, function(err, response, body) {
-                                    if (err) {
-                                      return console.error('upload failed:', err);
-                                    }
-                                    console.log('Server responded with:', response);
-                                    data = JSON.parse(body);
-                                    TestRestTime = data['resttime'];
-                                });
+        function sendPOST2API(PIN, INFO = ''){
+            // var text = document.getElementById("anstext").value; 
 
-                            }
-                        }
-                    );
+            const thumbSize = determineScreenShotSize()
+
+//// Ready to take screen shot
+            let options = {
+                types: ['screen'],
+                thumbnailSize: thumbSize
+            }
+            const screenshotFN = path.join(os.tmpdir(), 'screenshot' + Date.now() + '.png')
+            desktopCapturer.getSources(options, function (error, sources) {
+                if (error) return console.log(error)
+                sources.forEach(function (source) {
+                    console.log(source.name);
+                    if (source.name === 'Entire screen' || source.name === 'Screen 1') {
+                        fs.writeFile(screenshotFN, source.thumbnail.toPng(), function (error) {
+                            if (error) return console.log(error)
+                                console.log("Saved to "+screenshotFN);
+
+                                var photoFN;
+                                if (CamOK) { 
+                                    WebCamera.snap(function(data_uri) {
+                                        photoFN = path.join(os.tmpdir(), "photo" + Date.now() + ".jpeg")
+                                        var pimageBuffer = processBase64Image(data_uri);
+                                        fs.writeFile(photoFN, pimageBuffer.data, 
+                                            function(err) {
+                                                if(err){
+                                                    console.log("Cannot save the file 1111 time to cry !");
+                                                }else{
+                                                    console.log("Photo saved succesfully: " + photoFN);
+
+                                                    send2API(screenshotFN,photoFN,INFO);
+                                                }
+                                            });
+                                        // return screenshotFN;
+                                    });
+                                } else {
+                                    send2API(screenshotFN,"",INFO);
+
+                                }
 
 
+                        })
+                    }
+                })
+            })
 
-                },'image/jpeg');
         }
 
 
+
+            function send2API(screenshotFN,photoFN,INFO=''){
+/// Data sent begin
+                if (TestRestTime) {
+                    console.log(TestRestTime);
+                    var text = CKEDITOR.instances.anstext.getData();
+                }
+                var FormData = require('form-data');
+                let formData = {
+                    'text': text,
+                    'info': (INFO.length?INFO:os.hostname()+" "+os.platform()),
+                    'screenshot': fs.createReadStream(screenshotFN),
+                    'photo': (photoFN.length?fs.createReadStream(photoFN):""),
+                };
+
+                    // 'screenshot': fs.createReadStream(screenshotFN),
+                console.log("Err count: "+ErrorsCount);
+                // console.log(screenshotFN+"  =  "+photoFN);
+
+                request.post({
+                    url: APISRV+'testlog/bypin/'+PIN+'/',
+                    formData: formData
+                    }, function(err, response, body) {
+                            try {
+                                console.log('OK Server responded with:', response, err);
+                                data = JSON.parse(body);
+                                document.getElementById("networkmsg").innerHTML='';
+                                ErrorsCount = 0;
+                                TestRestTime = data['resttime'];
+                            } catch (err) {
+                                console.log(err);
+                                if (ErrorsCount >=MAXErrorsCount) {
+                                    showDlgFinish("Cannot connect to the server. Please fix network connection and start the application again. <br /><strong>Be advised:</strong> Time of the test will not be stoped during this time. If you whant to start the test from the begining, please inform your teacher.","No network connection",PIN,0,"finish");
+                                } else {
+                                    // Show message that NO connection
+                                    ErrorsCount++;
+                                    timetofix = (1+MAXErrorsCount-ErrorsCount)*intervalSendDATA/1000;
+                                    console.log(timetofix);
+                                    document.getElementById("networkmsg").innerHTML='<div class="alert alert-danger" style="padding:15px;font-size:120%"><strong>Connection error!</strong> Application cannot connect to the server. If you cannot fix connection during next '+timetofix+' seconds, the application will be closed </div>';
+
+                                }
+                                console.log(ErrorsCount);
+                            } finally {
+                                fs.unlink(screenshotFN,function(err){ if(err) console.log(err);});
+                                fs.unlink(photoFN,function(err){ if(err) console.log(err);});
+                                if (INFO == 'FINISH_TEST'){
+                                    // console.log(INFO)
+                                    ipcRenderer.send('testFINISHED');
+                                };
+
+                            }
+                });
+
+
+
+/// Data sent end
+            }
 
 // BEGIN Take a photo from webcam
 //
@@ -221,116 +354,132 @@
             }
 //  END Take a photo from webcam
 
+            const electron = require('electron')
+            const desktopCapturer = electron.desktopCapturer
+            const electronScreen = electron.screen
+            const shell = electron.shell
+            const path = require('path')
+
+            // var takeScreenShot = function () {
+            //     const thumbSize = determineScreenShotSize()
+            //     let options = {
+            //         types: ['screen'],
+            //         thumbnailSize: thumbSize
+            //     }
+            //     const screenshotPath = path.join(os.tmpdir(), 'screenshot' + Date.now() + '.png')
+            //     desktopCapturer.getSources(options, function (error, sources) {
+            //         if (error) return console.log(error)
+            //         sources.forEach(function (source) {
+            //             if (source.name === 'Entire screen' || source.name === 'Screen 1') {
+            //                 fs.writeFile(screenshotPath, source.thumbnail.toPng(), function (error) {
+            //                     if (error) return console.log(error)
+            //                 })
+            //             }
+            //         })
+            //     })
+            //     console.log("Saved to "+screenshotPath);
+            //     return screenshotPath;
+            // }
+
+            function determineScreenShotSize() {
+                const screenSize = electronScreen.getPrimaryDisplay().workAreaSize
+                const maxDimension = Math.max(screenSize.width, screenSize.height)
+                return {
+                    width: maxDimension * window.devicePixelRatio,
+                    height: maxDimension * window.devicePixelRatio
+                }
+            }
+
+
+
+
+
 // BEGIN Take a screenshot
 //
 // FROM http://ourcodeworld.com/articles/read/134/how-to-use-the-camera-with-electron-framework-create-a-snapshot-and-save-the-image-on-the-system
 //
-function fullscreenScreenshot(callback, imageFormat) {
-    var _this = this;
-    this.callback = callback;
-    imageFormat = imageFormat || 'image/jpeg';
+// function fullscreenScreenshot(screenshot, imageFormat) {
+//     // var _this = this;
+//     // this.callback = callback;
+//     imageFormat = imageFormat || 'image/jpeg';
     
-    this.handleStream = (stream) => {
-        // Create hidden video tag
-        var video = document.createElement('video');
-        video.style.cssText = 'position:absolute;top:-10000px;left:-10000px;';
-        // Event connected to stream
-        video.onloadedmetadata = function () {
-            // Set video ORIGINAL height (screenshot)
-            video.style.height = this.videoHeight + 'px'; // videoHeight
-            video.style.width = this.videoWidth + 'px'; // videoWidth
+//     this.handleStream = (stream) => {
+//         // Create hidden video tag
+//         var video = document.createElement('video');
+//         video.style.cssText = 'position:absolute;top:-10000px;left:-10000px;';
+//         // Event connected to stream
+//         video.onloadedmetadata = function () {
+//             // Set video ORIGINAL height (screenshot)
+//             video.style.height = this.videoHeight + 'px'; // videoHeight
+//             video.style.width = this.videoWidth + 'px'; // videoWidth
 
-            // Create canvas
-            var canvas = document.createElement('canvas');
-            canvas.width = this.videoWidth;
-            canvas.height = this.videoHeight;
-            var ctx = canvas.getContext('2d');
-            // Draw video on canvas
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+//             // Create canvas
+//             var canvas = document.createElement('canvas');
+//             canvas.width = this.videoWidth;
+//             canvas.height = this.videoHeight;
+//             var ctx = canvas.getContext('2d');
+//             // Draw video on canvas
+//             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-            if (_this.callback) {
-                // Save screenshot to base64
-                _this.callback(canvas.toDataURL(imageFormat));
-            } else {
-                console.log('Need callback!');
-            }
+//             var simageBuffer = processBase64Image(base64data);
+//             fs.writeFile(screenshot, simageBuffer.data, 
+//                 function(err) {
+//                     if(err){
+//                         console.log("Cannot save the file 22222 time to cry !");
+//                     }else{
+//                         console.log("Screenshot saved succesfully: " + screenshotFN);
+//                         return screenshot;
+//                     }
+//                 });
 
-            // Remove hidden video tag
-            video.remove();
-            try {
-                // Destroy connect to stream
-                stream.getTracks()[0].stop();
-            } catch (e) {}
-        }
-        video.src = URL.createObjectURL(stream);
-        document.body.appendChild(video);
-    };
+//             // Remove hidden video tag
+//             video.remove();
+//             try {
+//                 // Destroy connect to stream
+//                 stream.getTracks()[0].stop();
+//             } catch (e) {}
+//         }
+//         video.src = URL.createObjectURL(stream);
+//         document.body.appendChild(video);
+//     };
 
-    this.handleError = function(e) {
-        console.log(e);
-    };
+//     this.handleError = function(e) {
+//         console.log(e);
+//     };
 
-//
-// FROM http://ourcodeworld.com/articles/read/280/creating-screenshots-of-your-app-or-the-screen-in-electron-framework
-//
+// //
+// // FROM http://ourcodeworld.com/articles/read/280/creating-screenshots-of-your-app-or-the-screen-in-electron-framework
+// //
 
-    // Filter only screen type
-    desktopCapturer.getSources({types: ['screen']}, (error, sources) => {
-        if (error) throw error;
-        // console.log(sources);
-        for (let i = 0; i < sources.length; ++i) {
-            console.log(sources);
-            // Filter: main screen
-            if (sources[i].name === "Entire screen") {
-                navigator.webkitGetUserMedia({
-                    audio: false,
-                    video: {
-                        mandatory: {
-                            chromeMediaSource: 'desktop',
-                            chromeMediaSourceId: sources[i].id,
-                            minWidth: 1280,
-                            maxWidth: 4000,
-                            minHeight: 720,
-                            maxHeight: 4000
-                        }
-                    }
-                }, this.handleStream, this.handleError);
+//     // Filter only screen type
+//     desktopCapturer.getSources({types: ['screen']}, (error, sources) => {
+//         if (error) throw error;
+//         // console.log(sources);
+//         for (let i = 0; i < sources.length; ++i) {
+//             console.log(sources);
+//             // Filter: main screen
+//             if (sources[i].name === "Entire screen") {
+//                 navigator.webkitGetUserMedia({
+//                     audio: false,
+//                     video: {
+//                         mandatory: {
+//                             chromeMediaSource: 'desktop',
+//                             chromeMediaSourceId: sources[i].id,
+//                             minWidth: 1280,
+//                             maxWidth: 4000,
+//                             minHeight: 720,
+//                             maxHeight: 4000
+//                         }
+//                     }
+//                 }, this.handleStream, this.handleError);
 
-                return;
-            }
-        }
-    });
-}
+//                 return;
+//             }
+//         }
+//     });
+// }
 
         </script>
-
-
-
-<script>
-    $(document).ready(function($)
-    {
-        // Set initial zoom level
-        var fsize=14;
-
-        // Click events
-        $('#zoom_in').click(function() { zoom_font(1, $(this)) });
-        $('#zoom_out').click(function() { zoom_font(-1, $(this)) });
-        $('#zoom_reset').click(function() { zoom_font(0, $(this)) });
-
-        // Zoom function
-        function zoom_font(step, trigger)
-        {
-            // Set / reset zoom
-            if(step==0) 
-		fsize=14;
-            else 
-		fsize +=step;
-            // Set page zoom via CSS
-            $('body').css("font-size", fsize);
-        }
-    });
-</script>
-
 
 <script src="./js/script.js"></script>
 

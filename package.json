@@ -1,11 +1,12 @@
 {
   "name": "englishtest",
-  "version": "0.8.0",
+  "version": "1.0.0",
   "description": "college application to conduct remote testing",
   "author": "Vladimir Shevelev <shevelevw@gmail.com>",
   "main": "main.js",
   "license": "ISC",
   "dependencies": {
+    "electron-screenshot": "^1.0.5",
     "ipc": "0.0.1",
     "jquery": "^3.2.1",
     "pretty-bytes": "^2.0.1",
